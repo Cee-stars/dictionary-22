@@ -174,6 +174,11 @@
   }
   .card-en{font-size:17px; font-weight:650; line-height:1.35; word-break:break-word;}
   .card-ja{color:var(--muted); font-size:14.5px; margin-top:3px; word-break:break-word; white-space:pre-wrap;}
+  .card-ex{
+    color:var(--muted); font-size:12.5px; line-height:1.7; margin-top:7px;
+    padding-left:9px; border-left:2px solid var(--line);
+    word-break:break-word; white-space:pre-wrap; opacity:.85;
+  }
   .card-top{display:flex; align-items:flex-start; gap:8px;}
   .tag{
     flex:none; font-size:10.5px; padding:2.5px 7px; border-radius:6px; margin-top:4px;
@@ -309,6 +314,10 @@
     <div class="field">
       <label for="ja">日本語の意味</label>
       <textarea id="ja"></textarea>
+    </div>
+    <div class="field">
+      <label for="ex">例文（任意）</label>
+      <textarea id="ex" placeholder="使い方が分かる短い文を1つ。英文の下に日本語訳を書いてもOKです。"></textarea>
     </div>
     <div class="field">
       <label>大分類</label>
@@ -678,6 +687,7 @@ function render(){
                 '<div style="flex:1;min-width:0">' +
                   '<div class="card-en">' + esc(it.en) + '</div>' +
                   (it.ja ? '<div class="card-ja">' + esc(it.ja) + '</div>' : '') +
+                  (it.ex ? '<div class="card-ex">' + esc(it.ex) + '</div>' : '') +
                 '</div>' +
                 '<span class="tag">' + esc(tagLabel(it)) + '</span>' +
               '</div>' +
@@ -707,6 +717,7 @@ function openEditor(id, prefill){
   document.getElementById("edTitle").textContent = it ? "編集" : "新しい項目";
   document.getElementById("en").value = it ? it.en : (prefill || "");
   document.getElementById("ja").value = it ? (it.ja||"") : "";
+  document.getElementById("ex").value = it ? (it.ex||"") : "";
   typeTouched = !!it;
   var initType = it ? (it.type||"word") : guessType(prefill||"");
   editPosType = null; // 開くたびに必ず品詞リストを再構築させる
@@ -753,11 +764,12 @@ ov.addEventListener("click", function(e){ if(e.target === ov) closeEditor(); });
 document.getElementById("save").addEventListener("click", function(){
   var en = document.getElementById("en").value.trim();
   var ja = document.getElementById("ja").value.trim();
+  var ex = document.getElementById("ex").value.trim();
   var pos = document.getElementById("pos").value;
   if(!en){ document.getElementById("en").focus(); toast("英語を入力してください"); return; }
   if(editingId){
     var it = data.find(function(x){ return x.id===editingId; });
-    it.en = en; it.ja = ja; it.type = editType; it.pos = pos; it.updated = Date.now();
+    it.en = en; it.ja = ja; it.ex = ex; it.type = editType; it.pos = pos; it.updated = Date.now();
     save(); closeEditor(); render(); toast("更新しました");
     setTimeout(function(){ jumpTo(it.id); }, 80);
   }else{
@@ -765,7 +777,7 @@ document.getElementById("save").addEventListener("click", function(){
     if(dup && !confirm("「" + en + "」はすでに登録されています。それでも追加しますか？")){
       closeEditor(); jumpTo(dup.id); return;
     }
-    var nw = {id:uid(), en:en, ja:ja, type:editType, pos:pos, created:Date.now(), updated:Date.now()};
+    var nw = {id:uid(), en:en, ja:ja, ex:ex, type:editType, pos:pos, created:Date.now(), updated:Date.now()};
     data.push(nw); save(); closeEditor();
     q.value = ""; document.getElementById("clear").classList.remove("on");
     render(); toast("追加しました");
@@ -815,11 +827,34 @@ document.getElementById("mExport").addEventListener("click", function(){
 });
 document.getElementById("mCsv").addEventListener("click", function(){
   var qcsv = function(s){ return '"' + String(s||"").replace(/"/g,'""') + '"'; };
-  var rows = ["english,japanese,type,pos"];
-  data.forEach(function(it){ rows.push([qcsv(it.en), qcsv(it.ja), qcsv(TYPES[it.type]||""), qcsv(posLabel(it.type, it.pos))].join(",")); });
+  var rows = ["english,japanese,type,pos,example"];
+  data.forEach(function(it){ rows.push([qcsv(it.en), qcsv(it.ja), qcsv(TYPES[it.type]||""), qcsv(posLabel(it.type, it.pos)), qcsv(it.ex)].join(",")); });
   download("mydict-" + stamp() + ".csv", "﻿" + rows.join("\r\n"), "text/csv");
   menu.classList.remove("on"); toast("書き出しました");
 });
+/* 例文のように改行を含むセルがあるため、引用符の中の改行を1セルとして扱う */
+function parseCsv(text){
+  var rows = [], row = [], cell = "", quoted = false, inQ = false, i, c;
+  text = String(text).replace(/^﻿/,"").replace(/\r\n?/g, "\n");
+  function endCell(){ row.push(quoted ? cell : cell.trim()); cell = ""; quoted = false; }
+  function endRow(){ endCell(); rows.push(row); row = []; }
+  for(i=0;i<text.length;i++){
+    c = text.charAt(i);
+    if(inQ){
+      if(c !== '"') cell += c;
+      else if(text.charAt(i+1) === '"'){ cell += '"'; i++; }
+      else inQ = false;
+    }
+    else if(c === '"'){ inQ = true; quoted = true; }
+    else if(c === ","){ endCell(); }
+    else if(c === "\n"){ endRow(); }
+    else cell += c;
+  }
+  endRow();
+  return rows.filter(function(rw){
+    return rw.some(function(x){ return x !== ""; });
+  });
+}
 document.getElementById("mImport").addEventListener("click", function(){ document.getElementById("file").click(); });
 document.getElementById("file").addEventListener("change", function(e){
   var f = e.target.files[0]; if(!f) return;
@@ -828,21 +863,15 @@ document.getElementById("file").addEventListener("change", function(e){
     var added = 0, incoming = [];
     try{
       if(/\.csv$/i.test(f.name)){
-        var lines = String(r.result).replace(/^﻿/,"").split(/\r?\n/);
-        for(var i=0;i<lines.length;i++){
-          if(!lines[i].trim()) continue;
-          var cells = lines[i].match(/("([^"]|"")*"|[^,]*)(,|$)/g) || [];
-          cells = cells.map(function(c){
-            c = c.replace(/,$/,"").trim();
-            if(c.charAt(0)==='"') c = c.slice(1,-1).replace(/""/g,'"');
-            return c;
-          });
+        var rows = parseCsv(r.result);
+        for(var i=0;i<rows.length;i++){
+          var cells = rows[i];
           if(i===0 && /^english$/i.test(cells[0]||"")) continue;
           if(!cells[0]) continue;
           var tv = cells[2]||"";
           var tk = tv==="フレーズ"?"phrase" : tv==="構文"?"syntax" : (TYPES[tv]?tv:"word");
           var pk = posKeyFromLabel(tk, cells[3]||"");
-          incoming.push({en:cells[0], ja:cells[1]||"", type:tk, pos:pk});
+          incoming.push({en:cells[0], ja:cells[1]||"", type:tk, pos:pk, ex:cells[4]||""});
         }
       }else{
         var parsed = JSON.parse(r.result);
@@ -854,10 +883,14 @@ document.getElementById("file").addEventListener("change", function(e){
     incoming.forEach(function(it){
       if(!it || !it.en) return;
       var ex = data.find(function(x){ return norm(x.en) === norm(it.en); });
-      if(ex){ if(!ex.ja && it.ja) ex.ja = it.ja; return; }
+      if(ex){
+        if(!ex.ja && it.ja) ex.ja = it.ja;
+        if(!ex.ex && it.ex) ex.ex = String(it.ex);
+        return;
+      }
       var tp = TYPES[it.type] ? it.type : "word";
       var pk = isValidPos(tp, it.pos) ? it.pos : "";
-      data.push({id:uid(), en:String(it.en), ja:String(it.ja||""),
+      data.push({id:uid(), en:String(it.en), ja:String(it.ja||""), ex:String(it.ex||""),
                  type:tp, pos:pk,
                  created:it.created||Date.now(), updated:Date.now()});
       added++;
@@ -870,25 +903,39 @@ document.getElementById("file").addEventListener("change", function(e){
 });
 document.getElementById("mSample").addEventListener("click", function(){
   var s = [
-    ["get around to","なかなか手をつけられなかったことに、ようやく取りかかる","phrase","vp"],
-    ["It occurred to me that ~","ふと〜だと思いついた／気づいた","syntax","pattern"],
-    ["tentative","仮の、暫定的な。予定や結論がまだ確定していないとき","word","adj"],
-    ["I'm on the fence about ~","〜についてまだ決めかねている","phrase","vp"],
-    ["no wonder ~","どうりで〜なわけだ","syntax","pattern"],
-    ["overwhelming","圧倒的な。量や感情が処理しきれないほど多いとき","word","adj"],
-    ["Let me get back to you on that","それについては、あとで改めて返事します","phrase","vp"],
-    ["The thing is, ~","実はね、〜なんだ（本題や問題点を切り出すとき）","syntax","pattern"],
-    ["subtle","微妙な、さりげない。はっきりとは分からない差や表現","word","adj"],
-    ["It's not that I don't ~, it's just that ...","〜したくないわけじゃなくて、ただ…なだけ","syntax","pattern"],
-    ["reach","〜に到着する、手が届く（他動詞：すぐ後ろに目的語をとる）","word","vt"],
-    ["arrive","到着する（自動詞：目的語を直接とらず、arrive at/inのように前置詞を挟む）","word","vi"],
-    ["this way","このように、こんなふうに（名詞句だけど副詞的に使われる）","phrase","np_adv"],
-    ["the impossible","不可能なこと（形容詞句が名詞のように使われる用法）","phrase","adjp_noun"]
+    ["get around to","なかなか手をつけられなかったことに、ようやく取りかかる","phrase","vp",
+     "I finally got around to cleaning my room.\nやっと重い腰を上げて部屋を片づけた。"],
+    ["It occurred to me that ~","ふと〜だと思いついた／気づいた","syntax","pattern",
+     "It occurred to me that I had forgotten to lock the door.\nふと、鍵をかけ忘れたことに気づいた。"],
+    ["tentative","仮の、暫定的な。予定や結論がまだ確定していないとき","word","adj",
+     "We made a tentative plan to meet on Friday.\n金曜に会う、という仮の予定を立てた。"],
+    ["I'm on the fence about ~","〜についてまだ決めかねている","phrase","vp",
+     "I'm still on the fence about taking the job.\nその仕事を受けるか、まだ決めかねている。"],
+    ["no wonder ~","どうりで〜なわけだ","syntax","pattern",
+     "No wonder you're tired — you slept only three hours.\nどうりで疲れてるわけだ、3時間しか寝てないんだから。"],
+    ["overwhelming","圧倒的な。量や感情が処理しきれないほど多いとき","word","adj",
+     "The response to her post was overwhelming.\n彼女の投稿への反響は圧倒的だった。"],
+    ["Let me get back to you on that","それについては、あとで改めて返事します","phrase","vp",
+     "Good question. Let me get back to you on that tomorrow.\nいい質問ですね。それは明日、改めてお返事します。"],
+    ["The thing is, ~","実はね、〜なんだ（本題や問題点を切り出すとき）","syntax","pattern",
+     "The thing is, I already promised to help someone else.\n実はね、もう別の人を手伝う約束をしちゃってるんだ。"],
+    ["subtle","微妙な、さりげない。はっきりとは分からない差や表現","word","adj",
+     "There's a subtle difference between the two words.\nその2つの語には微妙な違いがある。"],
+    ["It's not that I don't ~, it's just that ...","〜したくないわけじゃなくて、ただ…なだけ","syntax","pattern",
+     "It's not that I don't like it, it's just that it's too expensive.\n嫌いなわけじゃなくて、ただ高すぎるだけ。"],
+    ["reach","〜に到着する、手が届く（他動詞：すぐ後ろに目的語をとる）","word","vt",
+     "We reached the station just before noon.\n正午の少し前に駅に着いた。"],
+    ["arrive","到着する（自動詞：目的語を直接とらず、arrive at/inのように前置詞を挟む）","word","vi",
+     "We arrived at the station just before noon.\n正午の少し前に駅に着いた。"],
+    ["this way","このように、こんなふうに（名詞句だけど副詞的に使われる）","phrase","np_adv",
+     "Hold the knife this way, and it's much safer.\nナイフはこんなふうに持つと、ずっと安全だよ。"],
+    ["the impossible","不可能なこと（形容詞句が名詞のように使われる用法）","phrase","adjp_noun",
+     "Don't ask me to do the impossible.\n不可能なことを求めないでよ。"]
   ];
   var n = 0;
   s.forEach(function(a){
     if(data.some(function(x){ return norm(x.en)===norm(a[0]); })) return;
-    data.push({id:uid(), en:a[0], ja:a[1], type:a[2], pos:a[3]||"", created:Date.now(), updated:Date.now()});
+    data.push({id:uid(), en:a[0], ja:a[1], ex:a[4]||"", type:a[2], pos:a[3]||"", created:Date.now(), updated:Date.now()});
     n++;
   });
   save(); render(); menu.classList.remove("on"); toast(n + " 件のサンプルを追加しました");
@@ -981,7 +1028,8 @@ function mergeSync(localItems, localTombstones, remoteItems, remoteTombstones){
     var newer = (it.updated||0) >= (keep.updated||0) ? it : keep;
     var finalId = localIdSet[keepId] ? keepId : (localIdSet[id] ? id : keepId);
     var merged = {
-      id: finalId, en: newer.en, ja: newer.ja, type: newer.type, pos: newer.pos,
+      id: finalId, en: newer.en, ja: newer.ja, ex: newer.ex || it.ex || keep.ex || "",
+      type: newer.type, pos: newer.pos,
       created: Math.min(it.created || newer.created || Date.now(), keep.created || newer.created || Date.now()),
       updated: Math.max(it.updated||0, keep.updated||0)
     };
