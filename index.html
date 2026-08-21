@@ -537,10 +537,14 @@ function toast(msg){
   clearTimeout(t._tm); t._tm = setTimeout(function(){ t.classList.remove("on"); }, 1700);
 }
 function hl(text, q){
-  if(!q) return esc(text);
-  var i = norm(text).indexOf(norm(q));
-  if(i < 0) return esc(text);
-  return esc(text.slice(0,i)) + "<mark>" + esc(text.slice(i, i+q.length)) + "</mark>" + esc(text.slice(i+q.length));
+  var s = String(text == null ? "" : text);
+  var needle = norm(q);
+  if(!needle) return esc(s);
+  // 位置を測る文字列と、切り出す文字列は必ず同じものにする。
+  // norm()は前後の空白を落とすので、それで測った位置で元の文字列を切るとずれる。
+  var i = s.toLowerCase().indexOf(needle);
+  if(i < 0) return esc(s);
+  return esc(s.slice(0,i)) + "<mark>" + esc(s.slice(i, i+needle.length)) + "</mark>" + esc(s.slice(i+needle.length));
 }
 function posLabel(type, key){
   var list = POS[type] || [];
@@ -813,6 +817,8 @@ document.getElementById("save").addEventListener("click", function(){
   if(!en){ document.getElementById("en").focus(); toast("英語を入力してください"); return; }
   if(editingId){
     var it = data.find(function(x){ return x.id===editingId; });
+    // 開いている間に同期が届くと、同じ語として統合されてこのidが消えていることがある
+    if(!it){ closeEditor(); render(); toast("この項目は同期で入れ替わりました"); return; }
     it.en = en; it.ja = ja; it.ex = ex; it.type = editType; it.pos = pos; it.updated = Date.now();
     save(); closeEditor(); render(); toast("更新しました");
     setTimeout(function(){ jumpTo(it.id); }, 80);
@@ -831,6 +837,7 @@ document.getElementById("save").addEventListener("click", function(){
 document.getElementById("del").addEventListener("click", function(){
   if(!editingId) return;
   var it = data.find(function(x){ return x.id===editingId; });
+  if(!it){ closeEditor(); render(); toast("この項目は同期で入れ替わりました"); return; }
   if(!confirm("「" + it.en + "」を削除しますか？")) return;
   data = data.filter(function(x){ return x.id !== editingId; });
   recordTombstone(it.id, it.en);
@@ -1105,14 +1112,39 @@ function gistCreate(token){
 function gistGet(gistId, token){
   return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "GET", token).then(function(json){
     var f = json.files && json.files["mydict-data.json"];
-    if(!f || !f.content) return {items:[], tombstones:[]};
-    try{
-      var parsed = JSON.parse(f.content);
+    // ファイルごと無いのは作りたてのGistなので、空として扱ってよい
+    if(!f) return {items:[], tombstones:[]};
+
+    // 1MBを超えるとGistのAPIはcontentを途中で切って返す。切られたまま読もうとすると
+    // 当然JSONにならず、「向こうは空だ」と誤解して相手のデータを消してしまう。全文を取り直す。
+    var truncated = !!(f.truncated && f.raw_url);
+    var body = truncated
+      ? fetch(f.raw_url).then(function(r){
+          if(!r.ok) throw new Error("同期データを読み込めませんでした");
+          return r.text();
+        }, function(){ throw new Error("同期データを読み込めませんでした"); })
+      : Promise.resolve(f.content || "");
+
+    return body.then(function(text){
+      if(!text){
+        // 中身が空なのは、まだ何も入れていないGistなら普通のこと。
+        // ただし「切られるほど大きい」と言われたファイルが空で返るのは明らかにおかしいので、
+        // 空扱いして相手を消してしまう前に止める。
+        if(truncated) throw new Error("同期データを読み込めませんでした");
+        return {items:[], tombstones:[]};
+      }
+      var parsed;
+      try{ parsed = JSON.parse(text); }
+      catch(e){
+        // ここで空を返すと、壊れている向こうを自分のデータで塗りつぶしてしまう。
+        // 何が起きているか分からないうちは、触らずに同期そのものを止める。
+        throw new Error("同期データが読めません（上書きせずに中止しました）");
+      }
       return {
         items: Array.isArray(parsed.items) ? parsed.items : [],
         tombstones: Array.isArray(parsed.tombstones) ? parsed.tombstones : []
       };
-    }catch(e){ return {items:[], tombstones:[]}; }
+    });
   });
 }
 function gistUpdate(gistId, token, items, tombs){
