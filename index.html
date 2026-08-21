@@ -184,6 +184,15 @@
     flex:none; font-size:10.5px; padding:2.5px 7px; border-radius:6px; margin-top:4px;
     background:var(--panel2); color:var(--muted); border:1px solid var(--line); letter-spacing:.03em;
   }
+  .card-side{flex:none; display:flex; flex-direction:column; align-items:flex-end; gap:6px; margin-top:2px;}
+  .send{
+    border:1px solid var(--line); background:var(--panel2); color:var(--text);
+    border-radius:9px; min-width:40px; min-height:34px; padding:0 9px;
+    font-size:15px; line-height:1; cursor:pointer;
+  }
+  .send:active{transform:scale(.94);}
+  .send.done{border-color:var(--accent-dim); background:var(--accent-dim);}
+  .sent{font-size:10px; font-weight:700; letter-spacing:.03em; color:var(--ok); white-space:nowrap;}
   .empty{text-align:center; color:var(--muted); padding:60px 20px; font-size:14.5px; line-height:2;}
 
   /* ---------- fab ---------- */
@@ -337,6 +346,34 @@
       <button class="btn primary" id="save">保存</button>
     </div>
     <div class="hint">保存するとこの端末の中に残ります（オフラインOK）</div>
+  </div>
+</div>
+
+<div class="overlay" id="sendSheet">
+  <div class="sheet">
+    <h2>瞬間英作文へ送る</h2>
+    <div class="hint left" id="sendFrom"></div>
+    <div class="field">
+      <label for="sendEn">英文</label>
+      <textarea id="sendEn" placeholder="The bus was ten minutes late."></textarea>
+    </div>
+    <div class="field">
+      <label for="sendJa">日本語</label>
+      <textarea id="sendJa" placeholder="バスが10分遅れた。"></textarea>
+    </div>
+    <div class="field">
+      <label for="sendPat">型（任意）</label>
+      <input type="text" id="sendPat" placeholder="N was 〜 minutes late.">
+    </div>
+    <div class="hint left">
+      瞬間英作文は「日本語を見て英文を作る」練習なので、<b>英文と日本語の両方</b>がそろっていないと出題できません。
+      型を入れておくと、向こうでメモとして一緒に出ます。
+    </div>
+    <div class="row">
+      <button class="btn" id="sendCancel">キャンセル</button>
+      <button class="btn primary" id="sendGo">送る</button>
+    </div>
+    <div class="hint">送ったあと瞬間英作文を開くと、上に「取り込む」が出ます。</div>
   </div>
 </div>
 
@@ -689,13 +726,20 @@ function render(){
                   (it.ja ? '<div class="card-ja">' + esc(it.ja) + '</div>' : '') +
                   (it.ex ? '<div class="card-ex">' + esc(it.ex) + '</div>' : '') +
                 '</div>' +
-                '<span class="tag">' + esc(tagLabel(it)) + '</span>' +
+                '<div class="card-side">' +
+                  '<span class="tag">' + esc(tagLabel(it)) + '</span>' +
+                  '<button type="button" class="send' + (it.sent ? " done" : "") + '" data-id="' + esc(it.id) + '"' +
+                    ' title="瞬間英作文へ送る" aria-label="瞬間英作文へ送る">📤</button>' +
+                  (it.sent ? '<span class="sent">送信済み</span>' : '') +
+                '</div>' +
               '</div>' +
             '</div>';
   }
   list.innerHTML = html;
 }
 document.getElementById("list").addEventListener("click", function(e){
+  var b = e.target.closest(".send");
+  if(b){ openSend(b.dataset.id); return; }   // 送るボタンの上では編集を開かない
   var c = e.target.closest(".card");
   if(c) openEditor(c.dataset.id);
 });
@@ -792,6 +836,98 @@ document.getElementById("del").addEventListener("click", function(){
   recordTombstone(it.id, it.en);
   save(); closeEditor(); render(); toast("削除しました");
 });
+
+/* ---------- 瞬間英作文へ送る ----------
+   瞬間英作文は同じドメインのパス違い（/sunkan-333/ など）に置かれているので、
+   localStorage はオリジン単位で共有される。そこを受け渡し場所に使う。
+   こちらは sunkan:inbox に足すだけ。取り込みと後始末は向こうがやる。 */
+var SHUNKAN_KEY = "sunkan:inbox";
+var SHUNKAN_MAX = 500;              // 取り込まれないまま溜まり続けないよう頭を打つ
+var SHUNKAN_SOURCE = "My Dictionary";  // 向こうではこの名前のセットになる
+var sendingId = null;
+var sendOv = document.getElementById("sendSheet");
+
+function hasJa(s){ return /[぀-ヿ㐀-鿿ｦ-ﾝ]/.test(String(s||"")); }
+function oneLine(s){ return String(s||"").replace(/\s+/g, " ").trim(); }
+
+/* 例文欄は「英文の下に日本語訳」を想定しているので、行ごとに振り分ける */
+function splitEx(ex){
+  var lines = String(ex||"").split(/\r?\n/), out = {en:"", ja:""};
+  for(var i=0;i<lines.length;i++){
+    var t = lines[i].trim();
+    if(!t) continue;
+    if(hasJa(t)){ if(!out.ja) out.ja = t; }
+    else if(!out.en) out.en = t;
+  }
+  return out;
+}
+
+function readInbox(){
+  try{
+    var list = JSON.parse(localStorage.getItem(SHUNKAN_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  }catch(e){ return []; }
+}
+
+function openSend(id){
+  var it = data.find(function(x){ return x.id===id; });
+  if(!it) return;
+  sendingId = id;
+  var ex = splitEx(it.ex);
+  var enEl = document.getElementById("sendEn");
+  enEl.value = ex.en || (hasJa(it.en) ? "" : it.en);
+  document.getElementById("sendJa").value = ex.ja || it.ja || "";
+  // 構文・フレーズは見出しそのものが「型」になる
+  document.getElementById("sendPat").value =
+    (it.type === "syntax" || it.type === "phrase") ? it.en : "";
+
+  var from = "「" + it.en + "」" + (it.ja ? "（" + oneLine(it.ja) + "）" : "") + " から作ります。";
+  if(!ex.en) from += " 例文が無いので、そのまま送ると単語だけのカードになります。文の形に直してから送るのがおすすめです。";
+  if(it.sent) from += " ※この項目は一度送っています。";
+  document.getElementById("sendFrom").textContent = from;
+
+  sendOv.classList.add("on");
+  // すでに埋まっているときは触らせない（開いて「送る」だけで済むように）
+  setTimeout(function(){ if(!enEl.value) enEl.focus(); }, 60);
+}
+
+function closeSend(){ sendOv.classList.remove("on"); sendingId = null; }
+
+function doSend(){
+  var enEl = document.getElementById("sendEn");
+  var jaEl = document.getElementById("sendJa");
+  var en = oneLine(enEl.value);
+  var ja = oneLine(jaEl.value);
+  var pat = oneLine(document.getElementById("sendPat").value);
+  if(!en){ enEl.focus(); toast("英文を入れてください"); return; }
+  if(!ja){ jaEl.focus(); toast("日本語を入れてください"); return; }
+
+  var now = Date.now();
+  var list = readInbox();
+  list.push({
+    id: "mydict:" + (sendingId || "x") + ":" + now,
+    en: en, ja: ja, pattern: pat, source: SHUNKAN_SOURCE, sentAt: now
+  });
+  if(list.length > SHUNKAN_MAX) list = list.slice(list.length - SHUNKAN_MAX);
+  try{
+    localStorage.setItem(SHUNKAN_KEY, JSON.stringify(list));
+  }catch(e){
+    toast("送れませんでした（保存の空きがありません）");
+    return;
+  }
+
+  // 送った印。updated は変えない（内容は変わっていないため）
+  var it = sendingId ? data.find(function(x){ return x.id===sendingId; }) : null;
+  if(it){ it.sent = now; save(); }
+
+  closeSend();
+  render();
+  toast("瞬間英作文へ送りました");
+}
+
+document.getElementById("sendCancel").addEventListener("click", closeSend);
+document.getElementById("sendGo").addEventListener("click", doSend);
+sendOv.addEventListener("click", function(e){ if(e.target === sendOv) closeSend(); });
 
 /* ---------- filter chips ---------- */
 document.querySelectorAll(".chip[data-f]").forEach(function(c){
@@ -1007,7 +1143,13 @@ function mergeSync(localItems, localTombstones, remoteItems, remoteTombstones){
     if(!it || !it.id) return;
     var ex = byId[it.id];
     if(!ex){ byId[it.id] = it; order.push(it.id); }
-    else if((it.updated||0) > (ex.updated||0)) byId[it.id] = it;
+    else {
+      // 「送った」印は内容の更新とは別に付くので、updatedの勝敗とは切り離して残す
+      var sent = Math.max(ex.sent||0, it.sent||0);
+      var win = (it.updated||0) > (ex.updated||0) ? it : ex;
+      if(sent) win.sent = sent;
+      byId[it.id] = win;
+    }
   }
   localItems.forEach(keepItem);
   remoteItems.forEach(keepItem);
@@ -1033,6 +1175,8 @@ function mergeSync(localItems, localTombstones, remoteItems, remoteTombstones){
       created: Math.min(it.created || newer.created || Date.now(), keep.created || newer.created || Date.now()),
       updated: Math.max(it.updated||0, keep.updated||0)
     };
+    var mergedSent = Math.max(it.sent||0, keep.sent||0);
+    if(mergedSent) merged.sent = mergedSent;
     delete byId[keepId];
     byId[finalId] = merged;
     byNorm[key] = finalId;
@@ -1185,7 +1329,8 @@ document.getElementById("syncOff").addEventListener("click", function(){
 document.getElementById("fab").addEventListener("click", function(){ openEditor(null, ""); });
 document.addEventListener("keydown", function(e){
   if(e.key === "Escape"){
-    if(ov.classList.contains("on")) closeEditor();
+    if(sendOv.classList.contains("on")) closeSend();
+    else if(ov.classList.contains("on")) closeEditor();
     else if(menu.classList.contains("on")) menu.classList.remove("on");
     return;
   }
