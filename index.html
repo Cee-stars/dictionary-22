@@ -270,6 +270,25 @@
   }
   .menu-item:last-of-type{border-bottom:0;}
   .menu-item small{color:var(--muted); font-size:12px; font-weight:400;}
+  .outbox{
+    position:fixed; z-index:59; display:flex; gap:6px; align-items:stretch;
+    left:max(14px, env(safe-area-inset-left)); right:88px;
+    bottom:calc(20px + env(safe-area-inset-bottom));
+  }
+  .outbox[hidden]{display:none;}
+  .outbox-go{
+    flex:1; min-width:0; min-height:52px; padding:8px 14px;
+    border:1px solid var(--accent); border-radius:14px;
+    background:var(--accent); color:#fff; font-size:14px; font-weight:650;
+    cursor:pointer; text-align:left; line-height:1.35;
+    box-shadow:0 8px 24px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .outbox-go small{display:block; font-weight:500; opacity:.85; font-size:11.5px;}
+  .outbox-go:active{transform:scale(.97);}
+  .outbox-x{
+    flex:none; width:40px; border:1px solid var(--line); border-radius:14px;
+    background:var(--panel); color:var(--muted); font-size:17px; cursor:pointer;
+  }
   .toast{
     position:fixed; left:50%; transform:translateX(-50%);
     bottom:calc(90px + env(safe-area-inset-bottom)); z-index:200;
@@ -312,6 +331,11 @@
 <main id="list"></main>
 
 <button class="fab" id="fab" aria-label="追加">+</button>
+
+<div class="outbox" id="outbox" hidden>
+  <button type="button" class="outbox-go" id="outboxGo"></button>
+  <button type="button" class="outbox-x" id="outboxX" aria-label="この案内を消す">×</button>
+</div>
 
 <div class="overlay" id="editor">
   <div class="sheet">
@@ -373,7 +397,7 @@
       <button class="btn" id="sendCancel">キャンセル</button>
       <button class="btn primary" id="sendGo">送る</button>
     </div>
-    <div class="hint">送ったあと瞬間英作文を開くと、上に「取り込む」が出ます。</div>
+    <div class="hint">送ったあと、下に出る「瞬間英作文で開く」から渡してください。</div>
   </div>
 </div>
 
@@ -851,6 +875,15 @@ document.getElementById("del").addEventListener("click", function(){
 var SHUNKAN_KEY = "sunkan:inbox";
 var SHUNKAN_MAX = 500;              // 取り込まれないまま溜まり続けないよう頭を打つ
 var SHUNKAN_SOURCE = "My Dictionary";  // 向こうではこの名前のセットになる
+
+/* iOS はホーム画面に追加したアプリとブラウザで保存領域が分かれる。
+   片方から書いた localStorage をもう片方は読めないので、それだけを頼りにすると
+   「送ったのに何も出てこない」ことになる。渡していないぶんを自分側にも控えておいて、
+   URLに載せて開けるようにする。URLなら箱が分かれていても必ず届く。 */
+var OUTBOX_KEY = "mydict.outbox";
+var OUTBOX_MAX = 100;               // 控えを持ちすぎない
+var URL_MAX = 12000;                // これ以上長いURLは開けない端末がある
+var SHUNKAN_URL = "../sunkan-333/"; // 同じGitHub Pagesのパス違い
 var sendingId = null;
 var sendOv = document.getElementById("sendSheet");
 
@@ -875,6 +908,59 @@ function readInbox(){
     return Array.isArray(list) ? list : [];
   }catch(e){ return []; }
 }
+
+/* ---------- 渡していないぶんの控え ---------- */
+function readOutbox(){
+  try{
+    var list = JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  }catch(e){ return []; }
+}
+function writeOutbox(list){
+  try{
+    if(!list.length) localStorage.removeItem(OUTBOX_KEY);
+    else localStorage.setItem(OUTBOX_KEY, JSON.stringify(list.slice(-OUTBOX_MAX)));
+  }catch(e){ /* 控えが持てなくても、送信そのものは済んでいる */ }
+}
+function renderOutbox(){
+  var box = document.getElementById("outbox");
+  var n = readOutbox().length;
+  if(!n){ box.hidden = true; return; }
+  document.getElementById("outboxGo").innerHTML =
+    "📤 " + n + " 件を瞬間英作文で開く<small>別々に開いていても確実に届きます</small>";
+  box.hidden = false;
+}
+
+/* JSON を URL に載せられる形（base64url）にする */
+function toBase64Url(text){
+  var bytes = new TextEncoder().encode(text), bin = "", i;
+  for(i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+
+function openShunkan(){
+  var list = readOutbox();
+  var url = SHUNKAN_URL, rest = [];
+  if(list.length){
+    // 入るぶんだけ載せ、あふれたら控えに残して次回に回す
+    var take = list.length, payload = "";
+    while(take > 0){
+      try{ payload = toBase64Url(JSON.stringify(list.slice(0, take))); }
+      catch(e){ payload = ""; }
+      if(payload && payload.length <= URL_MAX) break;
+      take--;
+    }
+    if(take > 0){ url += "#inbox=" + payload; rest = list.slice(take); }
+  }
+  writeOutbox(rest);
+  renderOutbox();
+  location.href = url;
+}
+
+document.getElementById("outboxGo").addEventListener("click", openShunkan);
+document.getElementById("outboxX").addEventListener("click", function(){
+  writeOutbox([]); renderOutbox();
+});
 
 function openSend(id){
   var it = data.find(function(x){ return x.id===id; });
@@ -910,11 +996,12 @@ function doSend(){
   if(!ja){ jaEl.focus(); toast("日本語を入れてください"); return; }
 
   var now = Date.now();
-  var list = readInbox();
-  list.push({
+  var card = {
     id: "mydict:" + (sendingId || "x") + ":" + now,
     en: en, ja: ja, pattern: pat, source: SHUNKAN_SOURCE, sentAt: now
-  });
+  };
+  var list = readInbox();
+  list.push(card);
   if(list.length > SHUNKAN_MAX) list = list.slice(list.length - SHUNKAN_MAX);
   try{
     localStorage.setItem(SHUNKAN_KEY, JSON.stringify(list));
@@ -923,12 +1010,15 @@ function doSend(){
     return;
   }
 
+  writeOutbox(readOutbox().concat([card]));
+
   // 送った印。updated は変えない（内容は変わっていないため）
   var it = sendingId ? data.find(function(x){ return x.id===sendingId; }) : null;
   if(it){ it.sent = now; save(); }
 
   closeSend();
   render();
+  renderOutbox();
   toast("瞬間英作文へ送りました");
 }
 
@@ -1413,6 +1503,7 @@ load();
 loadTombstones();
 renderSubToolbar();
 render();
+renderOutbox();
 updateSyncStatus();
 if(!("ontouchstart" in window)) q.focus();
 
