@@ -444,6 +444,18 @@
     <div class="row">
       <button class="btn" id="syncCreate">同期用の保存先を新規作成</button>
     </div>
+
+    <div class="field" style="margin-top:18px;">
+      <label for="pairIn">つなぐリンクを貼り付ける</label>
+      <textarea id="pairIn" rows="2" placeholder="瞬間英作文でコピーした「つなぐリンク」" autocomplete="off" spellcheck="false"></textarea>
+      <div class="hint left">
+        瞬間英作文の ⚙ →「つなぐリンクをコピー」で作ったものを貼ると、
+        トークンと Gist ID がそのまま入ります。手で打ち込む必要はありません。
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn" id="pairTake">貼り付けたリンクでつなぐ</button>
+    </div>
     <div class="field" style="margin-top:18px;">
       <label>自動同期（保存のたび・起動時にオンラインなら自動で同期）</label>
       <div class="segs" id="syncAutoSeg">
@@ -1444,6 +1456,34 @@ document.getElementById("syncAutoSeg").addEventListener("click", function(e){
   updateSyncStatus();
   if(on) trySync(true);
 });
+/* 瞬間英作文で作った「つなぐリンク」をそのまま受ける。
+   トークンを 2 回打たせないための口で、中身は {t: トークン, g: Gist ID}。 */
+function fromBase64Url(text){
+  var b64 = String(text).replace(/-/g,"+").replace(/_/g,"/");
+  while(b64.length % 4) b64 += "=";
+  var bin = atob(b64), bytes = new Uint8Array(bin.length), i;
+  for(i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+document.getElementById("pairTake").addEventListener("click", function(){
+  var box = document.getElementById("pairIn");
+  var m = String(box.value||"").match(/[#&]pair=([^&\s]+)/);
+  if(!m){ toast("つなぐリンクを貼り付けてください"); box.focus(); return; }
+  var conf = null;
+  try{ conf = JSON.parse(fromBase64Url(m[1])); }catch(e){ conf = null; }
+  if(!conf || !conf.t || !conf.g){ toast("このリンクは読めませんでした"); return; }
+  localStorage.setItem(SYNC_TOKEN_KEY, String(conf.t).trim());
+  localStorage.setItem(SYNC_GIST_KEY, String(conf.g).trim());
+  localStorage.setItem(SYNC_AUTO_KEY, "1");
+  syncTokenEl.value = String(conf.t).trim();
+  syncGistEl.value = String(conf.g).trim();
+  setSyncAutoSeg(true);
+  updateSyncStatus();
+  box.value = "";
+  toast("つながりました。いま同期しています…");
+  trySync(false);
+});
+
 document.getElementById("syncCreate").addEventListener("click", function(){
   var token = syncTokenEl.value.trim();
   if(!token){ toast("Personal Access Tokenを入力してください"); return; }
