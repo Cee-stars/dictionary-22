@@ -285,10 +285,11 @@
   }
   .outbox-go small{display:block; font-weight:500; opacity:.85; font-size:11.5px;}
   .outbox-go:active{transform:scale(.97);}
-  .outbox-x{
+  .outbox-copy, .outbox-x{
     flex:none; width:40px; border:1px solid var(--line); border-radius:14px;
-    background:var(--panel); color:var(--muted); font-size:17px; cursor:pointer;
+    background:var(--panel); color:var(--muted); font-size:16px; cursor:pointer;
   }
+  .outbox-copy:active, .outbox-x:active{transform:scale(.94);}
   .toast{
     position:fixed; left:50%; transform:translateX(-50%);
     bottom:calc(90px + env(safe-area-inset-bottom)); z-index:200;
@@ -334,6 +335,7 @@
 
 <div class="outbox" id="outbox" hidden>
   <button type="button" class="outbox-go" id="outboxGo"></button>
+  <button type="button" class="outbox-copy" id="outboxCopy" aria-label="リンクをコピー" title="リンクをコピー">🔗</button>
   <button type="button" class="outbox-x" id="outboxX" aria-label="この案内を消す">×</button>
 </div>
 
@@ -927,7 +929,7 @@ function renderOutbox(){
   var n = readOutbox().length;
   if(!n){ box.hidden = true; return; }
   document.getElementById("outboxGo").innerHTML =
-    "📤 " + n + " 件を瞬間英作文で開く<small>別々に開いていても確実に届きます</small>";
+    "📤 " + n + " 件を瞬間英作文で開く<small>ホーム画面のアプリへ渡すときは 🔗 でリンクをコピー</small>";
   box.hidden = false;
 }
 
@@ -938,11 +940,11 @@ function toBase64Url(text){
   return btoa(bin).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 }
 
-function openShunkan(){
+/* 控えを載せたリンクを作る。入るぶんだけ載せ、あふれたぶんは控えに残す */
+function buildShunkanLink(){
   var list = readOutbox();
-  var url = SHUNKAN_URL, rest = [];
+  var url = new URL(SHUNKAN_URL, location.href).href, rest = list;
   if(list.length){
-    // 入るぶんだけ載せ、あふれたら控えに残して次回に回す
     var take = list.length, payload = "";
     while(take > 0){
       try{ payload = toBase64Url(JSON.stringify(list.slice(0, take))); }
@@ -952,12 +954,43 @@ function openShunkan(){
     }
     if(take > 0){ url += "#inbox=" + payload; rest = list.slice(take); }
   }
-  writeOutbox(rest);
+  return {url:url, rest:rest, sent:list.length - rest.length};
+}
+
+function openShunkan(){
+  var made = buildShunkanLink();
+  writeOutbox(made.rest);
   renderOutbox();
-  location.href = url;
+  location.href = made.url;
+}
+
+/* ホーム画面から開いた瞬間英作文にはアドレス欄が無く、リンクを開かせられない。
+   そちらへ渡すには、リンクをコピーして向こうの「貼り付けて受け取る」に入れてもらう。 */
+function copyShunkanLink(){
+  var made = buildShunkanLink();
+  if(!made.sent){ toast("渡すものがありません"); return; }
+  var done = function(ok){
+    if(!ok){ toast("コピーできませんでした"); return; }
+    writeOutbox(made.rest);
+    renderOutbox();
+    toast("リンクをコピーしました。瞬間英作文の⚙→同期の設定で貼り付けてください");
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(made.url).then(function(){ done(true); }, function(){ done(false); });
+    return;
+  }
+  var ta = document.createElement("textarea");
+  ta.value = made.url;
+  ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  var ok = false;
+  try{ ok = document.execCommand("copy"); }catch(e){ ok = false; }
+  ta.remove();
+  done(ok);
 }
 
 document.getElementById("outboxGo").addEventListener("click", openShunkan);
+document.getElementById("outboxCopy").addEventListener("click", copyShunkanLink);
 document.getElementById("outboxX").addEventListener("click", function(){
   writeOutbox([]); renderOutbox();
 });
