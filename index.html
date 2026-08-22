@@ -790,7 +790,12 @@ function render(){
     var x = norm(a.en), y = norm(b.en);
     return x < y ? -1 : x > y ? 1 : 0;
   });
-  document.getElementById("count").textContent = data.length ? items.length + " 件" : "";
+  // 絞り込んでいるときに数だけ出すと、全体が減ったように見えてしまう。
+  // 端末どうしで見比べたときに食い違って見える元なので、全体の数も添える。
+  document.getElementById("count").textContent =
+    !data.length ? "" :
+    items.length === data.length ? data.length + " 件"
+                                 : items.length + " / " + data.length + " 件";
 
   if(!items.length){
     list.innerHTML = '<div class="empty">' +
