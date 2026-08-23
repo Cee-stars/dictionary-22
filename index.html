@@ -949,6 +949,11 @@ var SHUNKAN_SOURCE = "My Dictionary";  // 向こうではこの名前のセッ�
    「送ったのに何も出てこない」ことになる。渡していないぶんを自分側にも控えておいて、
    URLに載せて開けるようにする。URLなら箱が分かれていても必ず届く。 */
 var OUTBOX_KEY = "mydict.outbox";
+/* 同期が入っているときは、カードを Gist 経由で渡す。
+   瞬間英作文を「開く」と、その場のブラウザで別の入れ物のアプリが立ち上がってしまい、
+   本体とは別のアプリが増える。同期に載せてしまえば開く必要がない。
+   本体の sunkan-data.json とは別ファイルにして、互いの書き込みを踏まないようにする。 */
+var INBOX_FILE = "sunkan-inbox.json";
 var OUTBOX_MAX = 100;               // 控えを持ちすぎない
 var URL_MAX = 12000;                // これ以上長いURLは開けない端末がある
 var SHUNKAN_URL = "../sunkan-333/"; // 同じGitHub Pagesのパス違い
@@ -1126,16 +1131,30 @@ function doSend(){
     return;
   }
 
-  writeOutbox(readOutbox().concat([card]));
-
   // 送った印。updated は変えない（内容は変わっていないため）
   var it = sendingId ? data.find(function(x){ return x.id===sendingId; }) : null;
   if(it){ it.sent = now; save(); }
 
   closeSend();
   render();
-  renderOutbox();
-  toast("瞬間英作文へ送りました");
+
+  var synced = !!(localStorage.getItem(SYNC_TOKEN_KEY) && localStorage.getItem(SYNC_GIST_KEY));
+  if(!synced){
+    // 同期を使っていない端末では、これまでどおり手で渡してもらう
+    writeOutbox(readOutbox().concat([card]));
+    renderOutbox();
+    toast("瞬間英作文へ送りました");
+    return;
+  }
+
+  toast("瞬間英作文へ送っています…");
+  pushCardsToGist([card]).then(function(ok){
+    if(ok){ toast("瞬間英作文へ送りました。あちらを開くと出ます"); return; }
+    // 送れなければ控えに回して、手で渡す道を残す
+    writeOutbox(readOutbox().concat([card]));
+    renderOutbox();
+    toast("いま送れませんでした。左下のボタンから渡せます");
+  });
 }
 
 document.getElementById("sendCancel").addEventListener("click", closeSend);
@@ -1369,6 +1388,36 @@ function gistGet(gistId, token){
     });
   });
 }
+/* 瞬間英作文あての受け渡しファイルにカードを足す。本体のファイルには触らない */
+function pushCardsToGist(cards){
+  var token = localStorage.getItem(SYNC_TOKEN_KEY);
+  var gistId = localStorage.getItem(SYNC_GIST_KEY);
+  if(!token || !gistId) return Promise.resolve(false);
+  if(navigator.onLine === false) return Promise.resolve(false);
+
+  return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "GET", token)
+    .then(function(json){
+      var f = json && json.files && json.files[INBOX_FILE];
+      var list = [];
+      if(f && f.content){
+        try{
+          var parsed = JSON.parse(f.content);
+          if(parsed && Array.isArray(parsed.cards)) list = parsed.cards;
+        }catch(e){ list = []; }   // 読めなければ作り直す（本体データではないので実害がない）
+      }
+      var seen = {};
+      list.forEach(function(c){ if(c && c.id) seen[c.id] = true; });
+      cards.forEach(function(c){ if(c && c.id && !seen[c.id]){ list.push(c); seen[c.id] = true; } });
+      if(list.length > SHUNKAN_MAX) list = list.slice(list.length - SHUNKAN_MAX);
+
+      var files = {};
+      files[INBOX_FILE] = { content: JSON.stringify({app:"sunkan-inbox", v:1, cards:list}, null, 2) };
+      return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "PATCH", token,
+                     JSON.stringify({files:files}));
+    })
+    .then(function(){ return true; }, function(){ return false; });
+}
+
 function gistUpdate(gistId, token, items, tombs){
   var body = JSON.stringify({
     files: {"mydict-data.json": {content: JSON.stringify({items:items, tombstones:tombs}, null, 2)}}
@@ -1409,9 +1458,11 @@ function mergeSync(localItems, localTombstones, remoteItems, remoteTombstones){
   remoteItems.forEach(keepItem);
 
   // 3) 正規化した英語(norm(en))が一致する項目は同一語とみなし1件に統合。idはローカル側を優先。
+  //    ただし両方ともこの端末にあるものは、追加のときに「それでも追加しますか？」で
+  //    利用者がわざと分けたもの（run＝動詞／run＝名詞 など）。同期が勝手に消してはいけない。
   var localIdSet = {};
   localItems.forEach(function(it){ if(it) localIdSet[it.id] = true; });
-  var byNorm = {}, mergedIds = [];
+  var byNorm = {}, mergedIds = [], collapsed = 0;
   order.forEach(function(id){
     var it = byId[id];
     var key = norm(it.en);
@@ -1421,6 +1472,11 @@ function mergeSync(localItems, localTombstones, remoteItems, remoteTombstones){
     }
     var keepId = byNorm[key];
     var keep = byId[keepId];
+    if(localIdSet[keepId] && localIdSet[id]){
+      mergedIds.push(id);   // どちらも手元にある＝わざと分けてある。まとめない
+      return;
+    }
+    collapsed++;
     var newer = (it.updated||0) >= (keep.updated||0) ? it : keep;
     var finalId = localIdSet[keepId] ? keepId : (localIdSet[id] ? id : keepId);
     var merged = {
@@ -1443,16 +1499,29 @@ function mergeSync(localItems, localTombstones, remoteItems, remoteTombstones){
   });
 
   // 4) tombstoneの伝播：削除記録の方が新しければ復活させずに除外する
-  var items = [];
+  var items = [], tombstoned = 0;
   mergedIds.forEach(function(id){
     var it = byId[id];
     if(!it) return;
     var t = tMap[it.id];
-    if(t && (t.deletedAt||0) >= (it.updated||0)) return;
+    if(t && (t.deletedAt||0) >= (it.updated||0)){ tombstoned++; return; }
     items.push(it);
   });
 
-  return {items: items, tombstones: Object.keys(tMap).map(function(k){ return tMap[k]; })};
+  // 何をしたのかを数えておく。黙って件数が変わると原因を追えないため。
+  var localSeen = {}, incoming = 0;
+  localItems.forEach(function(it){ if(it && it.id) localSeen[it.id] = true; });
+  remoteItems.forEach(function(it){ if(it && it.id && !localSeen[it.id]) incoming++; });
+
+  return {
+    items: items,
+    tombstones: Object.keys(tMap).map(function(k){ return tMap[k]; }),
+    stats: {
+      before: localItems.length, after: items.length,
+      incoming: incoming, collapsed: collapsed, tombstoned: tombstoned,
+      remote: remoteItems.length
+    }
+  };
 }
 
 /* ---------- sync: 同期サイクル ---------- */
