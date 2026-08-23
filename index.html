@@ -1607,9 +1607,10 @@ function pairCode(){
 function updateSyncStatus(){
   var last = localStorage.getItem(SYNC_LAST_KEY);
   var code = pairCode();
+  var gid = localStorage.getItem(SYNC_GIST_KEY) || "";
   document.getElementById("syncLast").textContent =
     (last ? "最終同期: " + fmtDate(last) : "まだ同期していません")
-    + (code ? "　照合コード " + code + "（瞬間英作文と同じなら同じ保存先です）" : "");
+    + (code ? "　保存先 …" + gid.slice(-6) + " ／ 照合コード " + code : "");
   var ready = !!(localStorage.getItem(SYNC_TOKEN_KEY) && localStorage.getItem(SYNC_GIST_KEY));
   document.getElementById("mSyncStatus").textContent =
     !ready ? "未設定" : (localStorage.getItem(SYNC_AUTO_KEY)==="1" ? "自動ON" : "手動");
