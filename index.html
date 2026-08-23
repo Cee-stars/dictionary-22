@@ -1143,20 +1143,20 @@ function doSend(){
 
   var synced = !!(localStorage.getItem(SYNC_TOKEN_KEY) && localStorage.getItem(SYNC_GIST_KEY));
   if(!synced){
-    // 同期を使っていない端末では、これまでどおり手で渡してもらう
+    // 「送りました」と言うと届いたように読めてしまう。この端末に控えただけ
     writeOutbox(readOutbox().concat([card]));
     renderOutbox();
-    toast("瞬間英作文へ送りました");
+    toast("この端末は同期していません。下のボタンから渡してください");
     return;
   }
 
   toast("瞬間英作文へ送っています…");
-  pushCardsToGist([card]).then(function(ok){
-    if(ok){ toast("瞬間英作文へ送りました。あちらを開くと出ます"); return; }
+  pushCardsToGist([card]).then(function(res){
+    if(res && res.ok){ toast("送りました（受け渡し箱に " + res.total + " 件）"); return; }
     // 送れなければ控えに回して、手で渡す道を残す
     writeOutbox(readOutbox().concat([card]));
     renderOutbox();
-    toast("いま送れませんでした。左下のボタンから渡せます");
+    toast("送れませんでした: " + ((res && res.why) || "理由不明"));
   });
 }
 
@@ -1413,8 +1413,8 @@ function gistGet(gistId, token){
 function pushCardsToGist(cards){
   var token = localStorage.getItem(SYNC_TOKEN_KEY);
   var gistId = localStorage.getItem(SYNC_GIST_KEY);
-  if(!token || !gistId) return Promise.resolve(false);
-  if(navigator.onLine === false) return Promise.resolve(false);
+  if(!token || !gistId) return Promise.resolve({ok:false, why:"同期が未設定です"});
+  if(navigator.onLine === false) return Promise.resolve({ok:false, why:"オフラインです"});
 
   return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "GET", token)
     .then(function(json){
@@ -1434,9 +1434,10 @@ function pushCardsToGist(cards){
       var files = {};
       files[INBOX_FILE] = { content: JSON.stringify({app:"sunkan-inbox", v:1, cards:list}, null, 2) };
       return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "PATCH", token,
-                     JSON.stringify({files:files}));
+                     JSON.stringify({files:files}))
+        .then(function(){ return {ok:true, total:list.length}; });
     })
-    .then(function(){ return true; }, function(){ return false; });
+    .then(null, function(e){ return {ok:false, why: (e && e.message) || "理由不明"}; });
 }
 
 function gistUpdate(gistId, token, items, tombs){
