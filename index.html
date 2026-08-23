@@ -537,6 +537,9 @@ var SYNC_LAST_KEY = "mydict.sync.lastSync";
 var TOMB_MAXAGE = 90 * 24 * 60 * 60 * 1000; // tombstoneは直近90日分だけ保持
 var tombstones = [];
 var syncBusy = false;
+var syncBusyAt = 0;
+var REQ_TIMEOUT_MS = 20000;   // 返事が来ないまま固まらせない
+var BUSY_MAX_MS = 60000;      // 「同期中」が居座ったら諦めて次を受け付ける
 var syncTimer = null;
 
 /* ---------- storage ---------- */
@@ -1332,10 +1335,27 @@ function gistErrorMessage(status){
   if(status === 403) return "GitHubのアクセス制限に達しました（しばらくしてから再試行してください）";
   return "通信エラー（" + status + "）";
 }
+/* 返事が来ないと約束が永久に決まらず、次の同期が素通りしてしまう */
+function withTimeout(promise, ms){
+  return new Promise(function(resolve, reject){
+    var settled = false;
+    var timer = setTimeout(function(){
+      if(settled) return;
+      settled = true;
+      reject(new Error("返事がありませんでした（電波が弱いかもしれません）"));
+    }, ms);
+    promise.then(function(v){
+      if(settled) return; settled = true; clearTimeout(timer); resolve(v);
+    }, function(e){
+      if(settled) return; settled = true; clearTimeout(timer); reject(e);
+    });
+  });
+}
+
 function ghFetch(url, method, token, body){
   var headers = {"Authorization":"token " + token, "Accept":"application/vnd.github+json"};
   if(body) headers["Content-Type"] = "application/json";
-  return fetch(url, {method:method, headers:headers, body:body})
+  return withTimeout(fetch(url, {method:method, headers:headers, body:body}), REQ_TIMEOUT_MS)
     // 本当の理由を「オフラインかも」に置き換えると、原因が追えなくなる
     .catch(function(e){ throw new Error("GitHubに届きませんでした（" + ((e && e.message) || "理由不明") + "）"); })
     .then(function(res){
@@ -1534,8 +1554,12 @@ function trySync(silent){
     if(!silent) toast("オフラインのため同期できません");
     return;
   }
-  if(syncBusy) return;
+  if(syncBusy && Date.now() - syncBusyAt <= BUSY_MAX_MS){
+    if(!silent) toast("いま同期しています。少し待ってからどうぞ");
+    return;
+  }
   syncBusy = true;
+  syncBusyAt = Date.now();
   gistGet(gistId, token).then(function(remote){
     var merged = mergeSync(data, tombstones, remote.items, remote.tombstones);
     data = merged.items;
