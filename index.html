@@ -1594,9 +1594,22 @@ function fmtDate(ts){
   var d = new Date(+ts), p = function(n){ return (n<10?"0":"")+n; };
   return d.getFullYear() + "/" + p(d.getMonth()+1) + "/" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
 }
+/* 同じ保存先を見ているかを、アプリ同士で見比べるための短い印。
+   32文字のGist IDを目で照合するのは無理があるので4文字に畳む。中身は復元できない。 */
+function pairCode(){
+  var t = localStorage.getItem(SYNC_TOKEN_KEY) || "";
+  var g = localStorage.getItem(SYNC_GIST_KEY) || "";
+  if(!t || !g) return "";
+  var src = t + "\n" + g, h = 5381;
+  for(var i=0;i<src.length;i++) h = ((h << 5) + h + src.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36).toUpperCase().slice(-4);
+}
 function updateSyncStatus(){
   var last = localStorage.getItem(SYNC_LAST_KEY);
-  document.getElementById("syncLast").textContent = last ? "最終同期: " + fmtDate(last) : "まだ同期していません";
+  var code = pairCode();
+  document.getElementById("syncLast").textContent =
+    (last ? "最終同期: " + fmtDate(last) : "まだ同期していません")
+    + (code ? "　照合コード " + code + "（瞬間英作文と同じなら同じ保存先です）" : "");
   var ready = !!(localStorage.getItem(SYNC_TOKEN_KEY) && localStorage.getItem(SYNC_GIST_KEY));
   document.getElementById("mSyncStatus").textContent =
     !ready ? "未設定" : (localStorage.getItem(SYNC_AUTO_KEY)==="1" ? "自動ON" : "手動");
