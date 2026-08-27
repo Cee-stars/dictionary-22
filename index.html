@@ -194,6 +194,27 @@
   .send:active{transform:scale(.94);}
   .send.done{border-color:var(--accent-dim); background:var(--accent-dim);}
   .sent{font-size:10px; font-weight:700; letter-spacing:.03em; color:var(--ok); white-space:nowrap;}
+
+  /* ---------- 読み上げボタン ---------- */
+  .say{
+    border:1px solid var(--line); background:var(--panel2); color:var(--text);
+    border-radius:9px; min-width:40px; min-height:34px; padding:0 9px;
+    font-size:15px; line-height:1; cursor:pointer;
+  }
+  .say:active{transform:scale(.94);}
+  .no-voice .say, .no-voice .say-mini{display:none;}
+  .say.on, .say-mini.on{border-color:var(--accent); background:var(--accent-dim);}
+  .say-mini{
+    border:1px solid var(--line); background:var(--panel2); color:var(--text);
+    border-radius:7px; min-width:28px; min-height:24px; padding:0 6px; margin-left:6px;
+    font-size:11.5px; line-height:1; cursor:pointer; vertical-align:middle;
+  }
+  .say-mini:active{transform:scale(.94);}
+  .card-ex .say-mini{margin-left:5px;}
+  .labelrow{display:flex; align-items:center; gap:6px; margin:0 0 5px 2px;}
+  .labelrow label{margin:0;}
+  .labelrow .say-mini{margin-left:0;}
+
   .empty{text-align:center; color:var(--muted); padding:60px 20px; font-size:14.5px; line-height:2;}
 
   /* ---------- fab ---------- */
@@ -232,7 +253,7 @@
   }
   input[type=text]:focus, input[type=password]:focus, textarea:focus{border-color:var(--accent);}
   textarea{resize:vertical; min-height:74px; line-height:1.6;}
-  select#pos{
+  select#pos, select#voiceSel{
     width:100%; -webkit-appearance:none; -moz-appearance:none; appearance:none;
     background-color:var(--panel2);
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238b93a7' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
@@ -240,8 +261,8 @@
     border:1.5px solid var(--line); border-radius:10px; padding:11px 34px 11px 12px;
     outline:none; font-size:15.5px; cursor:pointer; transition:border-color .15s;
   }
-  select#pos:focus{border-color:var(--accent);}
-  select#pos option{background:var(--panel2); color:var(--text);}
+  select#pos:focus, select#voiceSel:focus{border-color:var(--accent);}
+  select#pos option, select#voiceSel option{background:var(--panel2); color:var(--text);}
   .segs{display:flex; gap:6px;}
   .seg{
     flex:1; text-align:center; padding:9px 4px; border-radius:10px; cursor:pointer;
@@ -344,7 +365,10 @@
   <div class="sheet">
     <h2 id="edTitle">新しい項目</h2>
     <div class="field">
-      <label for="en">English（単語・フレーズ・構文）</label>
+      <div class="labelrow">
+        <label for="en">English（単語・フレーズ・構文）</label>
+        <button type="button" class="say-mini" id="sayEn" title="読み上げる" aria-label="英語を読み上げる">🔊 聞く</button>
+      </div>
       <input type="text" id="en" autocomplete="off" autocapitalize="off" spellcheck="false">
     </div>
     <div class="field">
@@ -352,7 +376,10 @@
       <textarea id="ja"></textarea>
     </div>
     <div class="field">
-      <label for="ex">例文（英語・任意）</label>
+      <div class="labelrow">
+        <label for="ex">例文（英語・任意）</label>
+        <button type="button" class="say-mini" id="sayEx" title="読み上げる" aria-label="例文を読み上げる">🔊 聞く</button>
+      </div>
       <textarea id="ex" placeholder="He was about to leave."></textarea>
     </div>
     <div class="field">
@@ -418,10 +445,43 @@
     <div class="menu-item" id="mExport">バックアップを書き出す <small>JSONファイル</small></div>
     <div class="menu-item" id="mImport">バックアップを読み込む <small>JSON / CSV</small></div>
     <div class="menu-item" id="mCsv">CSVで書き出す <small>Excel等で開ける</small></div>
+    <div class="menu-item" id="mVoice">音声の設定 <small id="mVoiceStatus"></small></div>
     <div class="menu-item" id="mSample">サンプルを入れてみる <small>14件</small></div>
     <div class="menu-item" id="mSync">同期の設定 <small id="mSyncStatus"></small></div>
     <div class="row"><button class="btn" id="mClose">閉じる</button></div>
     <div class="hint">機種変更のときは書き出し→新しい端末で読み込み</div>
+  </div>
+</div>
+
+<div class="overlay" id="voiceSheet">
+  <div class="sheet">
+    <h2>音声の設定</h2>
+    <div class="hint left" style="margin-bottom:18px;">
+      読み上げには<b>端末に入っている音声</b>を使います。アカウントも通信も要らないので、
+      <b>無料・回数無制限</b>で、オフラインでも鳴ります。
+      はじめは<b>アメリカ英語の女性の声</b>を自動で選びます。
+    </div>
+    <div class="field">
+      <label for="voiceSel">声</label>
+      <select id="voiceSel"></select>
+      <div class="hint left" id="voiceNote"></div>
+    </div>
+    <div class="field">
+      <label>読み上げの速さ</label>
+      <div class="segs" id="rateSeg">
+        <div class="seg" data-r="0.7">ゆっくり</div>
+        <div class="seg" data-r="0.85">少し遅く</div>
+        <div class="seg on" data-r="1">ふつう</div>
+        <div class="seg" data-r="1.15">はやめ</div>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="voiceTest">試しに聞いてみる</button>
+    </div>
+    <div class="row">
+      <button class="btn" id="voiceClose">閉じる</button>
+    </div>
+    <div class="hint">カードの 🔊 を押すと、その場で読み上げます</div>
   </div>
 </div>
 
@@ -682,6 +742,220 @@ function search(q, limit){
   return out.slice(0, limit || 8).map(function(o){ return o.item; });
 }
 
+/* ---------- 読み上げ（端末に入っている音声を使う） ----------
+   外部の読み上げサービスは、鍵の管理と無料枠の上限がそのまま
+   「ある日いきなり鳴らなくなる」につながる。ブラウザに最初から入っている
+   speechSynthesis なら、通信も課金も回数の上限もなく、飛行機の中でも鳴る。 */
+var VOICE_KEY = "mydict.voice.name";
+var VOICE_RATE_KEY = "mydict.voice.rate";
+var synth = window.speechSynthesis || null;
+var voices = [];        // 英語の声だけを、良さそうな順に並べたもの
+var voiceName = "";     // 自分で選んだ声の名前（空なら自動で選ぶ）
+var voiceRate = 1;
+var sayingBtn = null;
+var keepAlive = null;
+
+/* 声が女性かどうかを機械的に知る方法は用意されていないので、
+   実際に端末に載っている声の名前を並べて見分ける。
+   外れることもあるから、設定から選び直せるようにしてある。 */
+var FEMALE_NAMES = [
+  "samantha","ava","allison","susan","zoe","nicky","joelle","noelle","kathy",
+  "karen","moira","tessa","fiona","serena","kate","martha","catherine","stephanie",
+  "zira","aria","jenny","michelle","ana","eva","hazel","linda","heather","sonia",
+  "natasha","clara","libby","maisie","emma","jane","nancy","sara","amber","ashley",
+  "cora","monica","jessa","jessica","mia","elizabeth","danielle","ruth",
+  "joanna","salli","kendra","kimberly","ivy","google us english"
+];
+var MALE_NAMES = [
+  "alex","fred","tom","daniel","oliver","arthur","aaron","bruce","ralph","junior",
+  "guy","davis","tony","jason","eric","christopher","brandon","george","james",
+  "ryan","thomas","mark","william","joey","justin","kevin","mike","rishi",
+  "gordon","liam","brian","steffan","roger","andrew","matthew","joseph"
+];
+/* 英語ではあっても、単語の練習には使いようがない声 */
+var NOVELTY_NAMES = [
+  "albert","bad news","bahh","bells","boing","bubbles","cellos","deranged",
+  "good news","jester","organ","superstar","trinoids","whisper","wobble","zarvox",
+  "hysterical","pipe organ","rocko","eddy","reed","grandma","grandpa","sandy","shelley"
+];
+
+function nameHas(name, list){
+  for(var i=0;i<list.length;i++){
+    var t = list[i];
+    if(t.indexOf(" ") >= 0){ if(name.indexOf(t) >= 0) return true; }
+    else if(new RegExp("(^|[^a-z])" + t + "([^a-z]|$)").test(name)) return true;
+  }
+  return false;
+}
+function isFemaleVoice(v){
+  var n = (v.name || "").toLowerCase() + " " + (v.voiceURI || "").toLowerCase();
+  if(/female/.test(n)) return true;
+  if(/(^|[^a-z])male([^a-z]|$)/.test(n)) return false;
+  return nameHas(n, FEMALE_NAMES);
+}
+function isUS(v){ return (v.lang||"").replace("_","-").toLowerCase() === "en-us"; }
+function voiceScore(v){
+  var n = (v.name || "").toLowerCase() + " " + (v.voiceURI || "").toLowerCase();
+  var lang = (v.lang || "").replace("_","-").toLowerCase();
+  var s = 0;
+  if(nameHas(n, NOVELTY_NAMES)) return -1000;      // 一覧にも出さない
+  if(lang === "en-us") s += 100;                   // まずアメリカ英語
+  else if(lang.indexOf("en") === 0) s += 20;       // 無ければ他の英語で代用
+  if(isFemaleVoice(v)) s += 60;                    // その中で女性の声
+  else if(nameHas(n, MALE_NAMES) || /(^|[^a-z])male([^a-z]|$)/.test(n)) s -= 60;
+  if(v.localService) s += 6;                       // 端末の中で鳴る＝通信が要らない
+  if(v.default) s += 2;
+  return s;
+}
+function loadVoices(){
+  var all = [];
+  if(synth && synth.getVoices){
+    try{ all = synth.getVoices() || []; }catch(e){ all = []; }
+  }
+  voices = all.filter(function(v){
+    return /^en/i.test((v.lang||"").replace("_","-")) && voiceScore(v) > -1000;
+  }).sort(function(a,b){ return voiceScore(b) - voiceScore(a); });
+  renderVoiceOptions();
+  updateVoiceStatus();
+}
+function pickVoice(){
+  if(!voices.length) return null;
+  if(voiceName){
+    for(var i=0;i<voices.length;i++){ if(voices[i].name === voiceName) return voices[i]; }
+  }
+  return voices[0];
+}
+function voiceLabel(v){
+  if(!v) return "";
+  var tag = isUS(v) ? "アメリカ英語" : (v.lang || "英語");
+  return v.name + "（" + tag + (isFemaleVoice(v) ? "・女性" : "") + "）";
+}
+function markSaying(btn){
+  if(sayingBtn && sayingBtn.classList) sayingBtn.classList.remove("on");
+  sayingBtn = btn || null;
+  if(sayingBtn && sayingBtn.classList) sayingBtn.classList.add("on");
+  if(!sayingBtn && keepAlive){ clearInterval(keepAlive); keepAlive = null; }
+}
+function speak(text, btn){
+  text = String(text == null ? "" : text).trim();
+  if(!synth){ toast("この端末では読み上げを使えません"); return; }
+  if(!text){ toast("読み上げる英語がありません"); return; }
+  // 同じボタンをもう一度押したら止める（言い直しのつもりで連打しても詰まらない）
+  var wasSpeaking = false;
+  try{ wasSpeaking = synth.speaking || synth.pending; }catch(e){}
+  if(sayingBtn && btn && sayingBtn === btn && wasSpeaking){
+    try{ synth.cancel(); }catch(e){}
+    markSaying(null);
+    return;
+  }
+  var go = function(){
+    try{
+      var u = new SpeechSynthesisUtterance(text);
+      var v = pickVoice();
+      if(v){ u.voice = v; u.lang = v.lang || "en-US"; }
+      else u.lang = "en-US";   // 声を選べない端末でも、英語として読ませる
+      u.rate = voiceRate;
+      u.pitch = 1;
+      u.onend = function(){ markSaying(null); };
+      u.onerror = function(){ markSaying(null); };
+      markSaying(btn);
+      synth.speak(u);
+      // 長い構文だと途中で切れるブラウザがあるので、鳴っている間だけ起こし続ける
+      if(text.length > 80 && !keepAlive){
+        keepAlive = setInterval(function(){
+          if(!synth.speaking){ clearInterval(keepAlive); keepAlive = null; return; }
+          try{ synth.resume(); }catch(e){}
+        }, 8000);
+      }
+    }catch(e){ markSaying(null); toast("読み上げできませんでした"); }
+  };
+  try{ synth.cancel(); }catch(e){}
+  // 直前の読み上げを止めた直後に喋らせると落ちる端末があるので、その時だけ一拍おく
+  if(wasSpeaking) setTimeout(go, 90); else go();
+}
+
+/* ---------- 音声の設定 ---------- */
+function renderVoiceOptions(){
+  var sel = document.getElementById("voiceSel");
+  if(!sel) return;
+  var html = '<option value="">自動（アメリカ英語の女性を優先）</option>';
+  for(var i=0;i<voices.length;i++){
+    html += '<option value="' + esc(voices[i].name) + '"' +
+            (voices[i].name === voiceName ? " selected" : "") + '>' +
+            esc(voiceLabel(voices[i])) + '</option>';
+  }
+  sel.innerHTML = html;
+  sel.value = voiceName;
+  if(sel.value !== voiceName){ voiceName = ""; sel.value = ""; }  // 端末を変えて声が消えた時
+
+  var note = document.getElementById("voiceNote");
+  if(!note) return;
+  if(!synth){
+    note.innerHTML = "この端末（ブラウザ）は読み上げに対応していません。";
+    return;
+  }
+  var v = pickVoice();
+  if(!v){
+    note.innerHTML = "英語の声が見つかりませんでした。端末の設定で英語の音声を追加すると使えるようになります。";
+    return;
+  }
+  var msg = "いまは <b>" + esc(voiceLabel(v)) + "</b> で読み上げます。";
+  if(!isUS(v)) msg += "<br>この端末にはアメリカ英語の声が見つかりませんでした。";
+  else if(!isFemaleVoice(v)) msg += "<br>女性の声が見つからなかったので、上の一覧から選び直せます。";
+  note.innerHTML = msg;
+}
+function updateVoiceStatus(){
+  var el = document.getElementById("mVoiceStatus");
+  if(!el) return;
+  if(!synth){ el.textContent = "この端末では使えません"; return; }
+  var v = pickVoice();
+  el.textContent = v ? voiceLabel(v) : "英語の声が見つかりません";
+}
+function setRate(r){
+  voiceRate = r;
+  try{ localStorage.setItem(VOICE_RATE_KEY, String(r)); }catch(e){}
+  document.querySelectorAll("#rateSeg .seg").forEach(function(s){
+    s.classList.toggle("on", parseFloat(s.dataset.r) === r);
+  });
+}
+function loadVoicePrefs(){
+  // 読み上げ自体が無い端末では、押しても何も起きないボタンを出さない
+  if(!synth) document.body.classList.add("no-voice");
+  try{
+    voiceName = localStorage.getItem(VOICE_KEY) || "";
+    var r = parseFloat(localStorage.getItem(VOICE_RATE_KEY));
+    voiceRate = (r >= 0.5 && r <= 2) ? r : 1;
+  }catch(e){ voiceName = ""; voiceRate = 1; }
+  setRate(voiceRate);
+}
+var voiceSheet = document.getElementById("voiceSheet");
+document.getElementById("mVoice").addEventListener("click", function(){
+  menu.classList.remove("on");
+  loadVoices();          // 開くたびに拾い直す（あとから声が増えることがある）
+  voiceSheet.classList.add("on");
+});
+document.getElementById("voiceClose").addEventListener("click", function(){ voiceSheet.classList.remove("on"); });
+voiceSheet.addEventListener("click", function(e){ if(e.target === voiceSheet) voiceSheet.classList.remove("on"); });
+document.getElementById("voiceSel").addEventListener("change", function(){
+  voiceName = this.value;
+  try{ localStorage.setItem(VOICE_KEY, voiceName); }catch(e){}
+  renderVoiceOptions();
+  updateVoiceStatus();
+  speak("This is how your words will sound.", null);
+});
+document.getElementById("rateSeg").addEventListener("click", function(e){
+  var s = e.target.closest(".seg"); if(!s) return;
+  setRate(parseFloat(s.dataset.r));
+  speak("This is how your words will sound.", null);
+});
+document.getElementById("voiceTest").addEventListener("click", function(){
+  speak("This is how your words will sound.", null);
+});
+
+if(synth && "onvoiceschanged" in synth){
+  synth.addEventListener("voiceschanged", loadVoices);
+}
+
 /* ---------- suggestions ---------- */
 var q = document.getElementById("q");
 var sug = document.getElementById("sug");
@@ -819,10 +1093,13 @@ function render(){
                   '<div class="card-en">' + esc(it.en) + '</div>' +
                   (it.ja ? '<div class="card-ja">' + esc(it.ja) + '</div>' : '') +
                   ((it.ex || it.exJa) ? '<div class="card-ex">' + esc(it.ex||"") +
+                    (it.ex ? '<button type="button" class="say-mini" data-say="ex" title="例文を読み上げる" aria-label="例文を読み上げる">🔊</button>' : '') +
                     (it.exJa ? '<span class="exja">' + esc(it.exJa) + '</span>' : '') + '</div>' : '') +
                 '</div>' +
                 '<div class="card-side">' +
                   '<span class="tag">' + esc(tagLabel(it)) + '</span>' +
+                  '<button type="button" class="say" data-say="en"' +
+                    ' title="英語を読み上げる" aria-label="英語を読み上げる">🔊</button>' +
                   '<button type="button" class="send' + (it.sent ? " done" : "") + '" data-id="' + esc(it.id) + '"' +
                     ' title="瞬間英作文へ送る" aria-label="瞬間英作文へ送る">📤</button>' +
                   (it.sent ? '<span class="sent">送信済み</span>' : '') +
@@ -833,6 +1110,13 @@ function render(){
   list.innerHTML = html;
 }
 document.getElementById("list").addEventListener("click", function(e){
+  var say = e.target.closest(".say, .say-mini");
+  if(say){                                   // 読み上げの上では編集を開かない
+    var sc = say.closest(".card");
+    var si = sc && data.find(function(x){ return x.id === sc.dataset.id; });
+    if(si) speak(say.dataset.say === "ex" ? si.ex : si.en, say);
+    return;
+  }
   var b = e.target.closest(".send");
   if(b){ openSend(b.dataset.id); return; }   // 送るボタンの上では編集を開かない
   var c = e.target.closest(".card");
@@ -892,6 +1176,12 @@ function setType(t){
 }
 document.getElementById("segs").addEventListener("click", function(e){
   var s = e.target.closest(".seg"); if(s){ typeTouched = true; setType(s.dataset.t); }
+});
+document.getElementById("sayEn").addEventListener("click", function(){
+  speak(document.getElementById("en").value, this);
+});
+document.getElementById("sayEx").addEventListener("click", function(){
+  speak(document.getElementById("ex").value, this);
 });
 // 入力中も種類を自動で追従（自分で選んだあとは追従しない）
 document.getElementById("en").addEventListener("input", function(){
@@ -1772,6 +2062,10 @@ if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
 /* ---------- init ---------- */
 load();
 loadTombstones();
+loadVoicePrefs();
+loadVoices();
+/* Safari は声の一覧を後から揃えるので、一拍おいてもう一度拾う */
+setTimeout(loadVoices, 400);
 renderSubToolbar();
 render();
 renderOutbox();
