@@ -2,14 +2,20 @@
    index.html だけで完結するアプリ（アイコンは base64、マニフェストは実行時生成）なので、
    持っておくのは入口の 1 枚だけでよい。 */
 
-var CACHE = "mydict-v2";
+var CACHE = "mydict-v3";
 var SHELL = "./index.html";
 
 self.addEventListener("install", function(e){
   self.skipWaiting();
   e.waitUntil(
     caches.open(CACHE).then(function(c){
-      return c.addAll(["./", SHELL]).catch(function(){});
+      /* addAll はブラウザのHTTPキャッシュを通るので、古い1枚が残っていると
+         それをそのまま貯め込んでしまう。入口だけは必ず取り直す。 */
+      return Promise.all(["./", SHELL].map(function(u){
+        return fetch(u, {cache:"reload"}).then(function(r){
+          return (r && r.ok) ? c.put(u, r) : null;
+        }).catch(function(){});
+      }));
     })
   );
 });
@@ -33,8 +39,15 @@ self.addEventListener("fetch", function(e){
   /* 同期はGitHubへの通信そのものなので、キャッシュに逃がしても意味がない。
      ここで触らず、失敗はアプリ側のtoastに任せる。 */
 
+  /* 入口の1枚はブラウザのHTTPキャッシュを飛ばして取り直す。
+     GitHub Pages は10分ぶん持たせる指示を付けて返すので、そのままだと
+     更新したのに古い画面が開く（サーバーは新しいのに、手元が入れ替わらない）。 */
+  var fromNet = (req.mode === "navigate")
+    ? fetch(req.url, {cache:"reload", credentials:"same-origin"})
+    : fetch(req);
+
   e.respondWith(
-    fetch(req).then(function(res){
+    fromNet.then(function(res){
       // 404 や 500 を貯めると、オフラインのときにそれが返ってしまう
       if(res && res.ok && res.type === "basic"){
         var copy = res.clone();

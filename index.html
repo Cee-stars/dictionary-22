@@ -2049,11 +2049,22 @@ document.addEventListener("keydown", function(e){
    sw.js を同じフォルダに置いた時だけ登録する。
    置かなくてもアプリは普通に動く（404 エラーも出ない）。 */
 if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
+  /* 新しい版に入れ替わった直後は、いま開いている画面がまだ古い。
+     入れ替わりを見て 1 度だけ読み込み直す（初回登録のときは何もしない）。 */
+  var hadWorker = !!navigator.serviceWorker.controller;
+  var reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", function(){
+    if(!hadWorker || reloading) return;
+    reloading = true;
+    location.reload();
+  });
   window.addEventListener("load", function(){
     fetch("sw.js", {method:"GET", cache:"no-store"}).then(function(r){
       var ct = (r.headers.get("content-type") || "");
       if(r.ok && ct.indexOf("javascript") >= 0){
-        navigator.serviceWorker.register("sw.js").catch(function(){});
+        navigator.serviceWorker.register("sw.js").then(function(reg){
+          try{ reg.update(); }catch(e){}   // 開くたびに新しい版が無いか見に行く
+        }).catch(function(){});
       }
     }).catch(function(){});
   });
