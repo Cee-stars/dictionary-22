@@ -1561,14 +1561,18 @@ document.getElementById("file").addEventListener("change", function(e){
         if(!ex.ja && it.ja) ex.ja = it.ja;
         if(!ex.ex && inEx) ex.ex = inEx;
         if(!ex.exJa && inExJa) ex.exJa = String(inExJa);
+        if(!ex.sent && it.sent) ex.sent = it.sent;
         return;
       }
       var tp = TYPES[it.type] ? it.type : "word";
       var pk = isValidPos(tp, it.pos) ? it.pos : "";
-      data.push({id:uid(), en:String(it.en), ja:String(it.ja||""),
-                 ex:inEx, exJa:String(inExJa||""),
-                 type:tp, pos:pk,
-                 created:it.created||Date.now(), updated:Date.now()});
+      var nw = {id:uid(), en:String(it.en), ja:String(it.ja||""),
+                ex:inEx, exJa:String(inExJa||""),
+                type:tp, pos:pk,
+                created:it.created||Date.now(), updated:Date.now()};
+      // 「送信済み」は書き出しに入っている。落とすと、どれを瞬間英作文へ渡したか分からなくなる
+      if(it.sent) nw.sent = it.sent;
+      data.push(nw);
       added++;
     });
     save(); render(); menu.classList.remove("on");
@@ -1699,6 +1703,32 @@ function gistGet(gistId, token){
     });
   });
 }
+/* 受け渡し箱の中身を読む。
+   Gistは1MBを超えるとcontentを途中で切って返すので、切られていたら全文を取り直す。
+   読めないまま書き戻すと、瞬間英作文がまだ取り込んでいない札をこちらが消してしまう。
+   読めないときは足さずに中止する。送れなかった札は控えに回るので、手で渡せる。 */
+function readInboxCards(f){
+  if(!f) return Promise.resolve([]);            // ファイルごと無い＝まだ何も送っていない
+  var truncated = !!(f.truncated && f.raw_url);
+  var body = truncated
+    ? fetch(f.raw_url).then(function(r){
+        if(!r.ok) throw new Error("受け渡し箱を読めませんでした");
+        return r.text();
+      }, function(){ throw new Error("受け渡し箱を読めませんでした"); })
+    : Promise.resolve(f.content || "");
+  return body.then(function(text){
+    if(!text){
+      // 「切られるほど大きい」と言われたものが空で返るのは明らかにおかしい
+      if(truncated) throw new Error("受け渡し箱を読めませんでした");
+      return [];
+    }
+    var parsed;
+    try{ parsed = JSON.parse(text); }
+    catch(e){ throw new Error("受け渡し箱が読めません（上書きせずに中止しました）"); }
+    return (parsed && Array.isArray(parsed.cards)) ? parsed.cards : [];
+  });
+}
+
 /* 瞬間英作文あての受け渡しファイルにカードを足す。本体のファイルには触らない */
 function pushCardsToGist(cards){
   var token = localStorage.getItem(SYNC_TOKEN_KEY);
@@ -1708,24 +1738,18 @@ function pushCardsToGist(cards){
 
   return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "GET", token)
     .then(function(json){
-      var f = json && json.files && json.files[INBOX_FILE];
-      var list = [];
-      if(f && f.content){
-        try{
-          var parsed = JSON.parse(f.content);
-          if(parsed && Array.isArray(parsed.cards)) list = parsed.cards;
-        }catch(e){ list = []; }   // 読めなければ作り直す（本体データではないので実害がない）
-      }
-      var seen = {};
-      list.forEach(function(c){ if(c && c.id) seen[c.id] = true; });
-      cards.forEach(function(c){ if(c && c.id && !seen[c.id]){ list.push(c); seen[c.id] = true; } });
-      if(list.length > SHUNKAN_MAX) list = list.slice(list.length - SHUNKAN_MAX);
+      return readInboxCards(json && json.files && json.files[INBOX_FILE]).then(function(list){
+        var seen = {};
+        list.forEach(function(c){ if(c && c.id) seen[c.id] = true; });
+        cards.forEach(function(c){ if(c && c.id && !seen[c.id]){ list.push(c); seen[c.id] = true; } });
+        if(list.length > SHUNKAN_MAX) list = list.slice(list.length - SHUNKAN_MAX);
 
-      var files = {};
-      files[INBOX_FILE] = { content: JSON.stringify({app:"sunkan-inbox", v:1, cards:list}, null, 2) };
-      return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "PATCH", token,
-                     JSON.stringify({files:files}))
-        .then(function(){ return {ok:true, total:list.length}; });
+        var files = {};
+        files[INBOX_FILE] = { content: JSON.stringify({app:"sunkan-inbox", v:1, cards:list}, null, 2) };
+        return ghFetch("https://api.github.com/gists/" + encodeURIComponent(gistId), "PATCH", token,
+                       JSON.stringify({files:files}))
+          .then(function(){ return {ok:true, total:list.length}; });
+      });
     })
     .then(null, function(e){ return {ok:false, why: (e && e.message) || "理由不明"}; });
 }
@@ -2010,21 +2034,26 @@ document.getElementById("syncOff").addEventListener("click", function(){
 
 /* ---------- fab / shortcuts ---------- */
 document.getElementById("fab").addEventListener("click", function(){ openEditor(null, ""); });
+/* 何かのシートが出ている間は、その裏で別の画面が開かないようにする */
+function sheetOpen(){ return !!document.querySelector(".overlay.on"); }
 document.addEventListener("keydown", function(e){
   if(e.key === "Escape"){
+    // 手前に出ているものから 1 枚ずつ閉じる
     if(sendOv.classList.contains("on")) closeSend();
     else if(ov.classList.contains("on")) closeEditor();
+    else if(voiceSheet.classList.contains("on")) voiceSheet.classList.remove("on");
+    else if(syncSheet.classList.contains("on")) closeSyncSheet();
     else if(menu.classList.contains("on")) menu.classList.remove("on");
     return;
   }
   var typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-  if((e.key === "/" || (e.key === "k" && (e.metaKey || e.ctrlKey))) && !typing){
+  if((e.key === "/" || (e.key === "k" && (e.metaKey || e.ctrlKey))) && !typing && !sheetOpen()){
     e.preventDefault(); q.focus(); q.select();
   }
   if((e.metaKey || e.ctrlKey) && e.key === "Enter" && ov.classList.contains("on")){
     e.preventDefault(); document.getElementById("save").click();
   }
-  if(e.key === "n" && !typing && !ov.classList.contains("on")){ e.preventDefault(); openEditor(null,""); }
+  if(e.key === "n" && !typing && !sheetOpen()){ e.preventDefault(); openEditor(null,""); }
 });
 
 /* ---------- install tip ---------- */
