@@ -850,6 +850,9 @@ function speak(text, btn){
   }
   var go = function(){
     try{
+      // iOSは声の一覧を後から揃えることがある。押された時点ならたいてい揃っている。
+      // 空のまま喋らせると、日本語の声が英語を読む格好になりやすい。
+      if(!voices.length) loadVoices();
       var u = new SpeechSynthesisUtterance(text);
       var v = pickVoice();
       if(v){ u.voice = v; u.lang = v.lang || "en-US"; }
@@ -1137,13 +1140,18 @@ function buildPosOptions(type, selected){
 function openEditor(id, prefill){
   editingId = id || null;
   var it = id ? data.find(function(x){ return x.id===id; }) : null;
+  /* 検索欄は「英語でも日本語でも」引ける。日本語で引いて見つからず、そのまま
+     「＋新しく追加」を押したとき、打った日本語を English の欄に入れてしまうと、
+     必ず手で入れ替えることになる。日本語なら意味の欄に置いて、英語の欄を待つ。 */
+  var pre = prefill || "";
+  var preJa = !it && hasJa(pre);
   document.getElementById("edTitle").textContent = it ? "編集" : "新しい項目";
-  document.getElementById("en").value = it ? it.en : (prefill || "");
-  document.getElementById("ja").value = it ? (it.ja||"") : "";
+  document.getElementById("en").value = it ? it.en : (preJa ? "" : pre);
+  document.getElementById("ja").value = it ? (it.ja||"") : (preJa ? pre : "");
   document.getElementById("ex").value = it ? (it.ex||"") : "";
   document.getElementById("exJa").value = it ? (it.exJa||"") : "";
   typeTouched = !!it;
-  var initType = it ? (it.type||"word") : guessType(prefill||"");
+  var initType = it ? (it.type||"word") : guessType(preJa ? "" : pre);
   editPosType = null; // 開くたびに必ず品詞リストを再構築させる
   setType(initType);
   if(it && it.pos){
@@ -1156,7 +1164,8 @@ function openEditor(id, prefill){
   ov.classList.add("on");
   sug.classList.remove("on");
   setTimeout(function(){
-    var f = (it || !prefill) ? document.getElementById("en") : document.getElementById("ja");
+    // 空いているほうへ入れてもらう
+    var f = (it || !pre || preJa) ? document.getElementById("en") : document.getElementById("ja");
     f.focus();
   }, 60);
 }
