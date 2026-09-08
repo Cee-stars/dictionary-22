@@ -1184,7 +1184,8 @@ function setType(t){
   }
 }
 document.getElementById("segs").addEventListener("click", function(e){
-  var s = e.target.closest(".seg"); if(s){ typeTouched = true; setType(s.dataset.t); }
+  var s = e.target.closest(".seg");
+  if(s){ typeTouched = true; setType(s.dataset.t); saveDraft(); }
 });
 document.getElementById("sayEn").addEventListener("click", function(){
   speak(document.getElementById("en").value, this);
@@ -1196,7 +1197,7 @@ document.getElementById("sayEx").addEventListener("click", function(){
 document.getElementById("en").addEventListener("input", function(){
   if(!typeTouched && !editingId) setType(guessType(this.value));
 });
-function closeEditor(){ ov.classList.remove("on"); editingId = null; }
+function closeEditor(){ ov.classList.remove("on"); editingId = null; clearDraft(); }
 document.getElementById("cancel").addEventListener("click", closeEditor);
 ov.addEventListener("click", function(e){ if(e.target === ov) closeEditor(); });
 
@@ -1237,6 +1238,85 @@ document.getElementById("del").addEventListener("click", function(){
   recordTombstone(it.id, it.en);
   save(); closeEditor(); render(); toast("削除しました");
 });
+
+/* ---------- 書きかけを覚えておく ----------
+   入力の途中でアプリを落とすことになっても、打った内容だけは戻せるようにする。
+   本体（mydict.v1）とは別の場所に置くので、辞書そのものには一切触らない。 */
+var DRAFT_KEY = "mydict.draft";
+var DRAFT_MAXAGE = 24 * 60 * 60 * 1000;   // 何日も前の書きかけが急に出てくると驚く
+
+function draftIsEmpty(d){
+  return !d || (!d.en && !d.ja && !d.ex && !d.exJa);
+}
+function saveDraft(){
+  if(!ov.classList.contains("on")) return;   // 編集画面が出ていないときは何もしない
+  var d = {
+    id: editingId || "",
+    en: document.getElementById("en").value,
+    ja: document.getElementById("ja").value,
+    ex: document.getElementById("ex").value,
+    exJa: document.getElementById("exJa").value,
+    type: editType,
+    pos: document.getElementById("pos").value,
+    at: Date.now()
+  };
+  if(draftIsEmpty(d)){ clearDraft(); return; }
+  // 開いて眺めただけのものを次の起動で開き直さないよう、変えていないなら控えない
+  if(d.id){
+    var it = data.find(function(x){ return x.id === d.id; });
+    if(it && it.en === d.en && (it.ja||"") === d.ja && (it.ex||"") === d.ex &&
+       (it.exJa||"") === d.exJa && (it.type||"word") === d.type && (it.pos||"") === d.pos){
+      clearDraft(); return;
+    }
+  }
+  try{ localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); }catch(e){}
+}
+function clearDraft(){
+  try{ localStorage.removeItem(DRAFT_KEY); }catch(e){}
+}
+function restoreDraft(){
+  var d = null;
+  try{ d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); }catch(e){ d = null; }
+  if(draftIsEmpty(d) || (Date.now() - (d.at||0)) > DRAFT_MAXAGE){ clearDraft(); return; }
+  // 書きかけていた相手が、同期で入れ替わって消えていることもある
+  if(d.id && !data.find(function(x){ return x.id === d.id; })) d.id = "";
+  openEditor(d.id || null, "");
+  document.getElementById("en").value = d.en || "";
+  document.getElementById("ja").value = d.ja || "";
+  document.getElementById("ex").value = d.ex || "";
+  document.getElementById("exJa").value = d.exJa || "";
+  typeTouched = true;                                   // 打ち直しで種類を変えない
+  setType(TYPES[d.type] ? d.type : "word");
+  if(d.pos){
+    var posSel = document.getElementById("pos");
+    for(var i=0;i<posSel.options.length;i++){
+      if(posSel.options[i].value === d.pos){ posSel.value = d.pos; break; }
+    }
+  }
+  toast("書きかけを戻しました");
+}
+// 打つたびに控えておく（アプリを落とされる前触れは無い）
+ov.addEventListener("input", saveDraft);
+ov.addEventListener("change", saveDraft);
+
+/* ---------- 別のアプリから戻ってきたとき ----------
+   iOS は、入力欄に入ったままアプリを離れると、戻ったときに「もう選ばれている」
+   ままキーボードだけ出てこないことがある。その欄を触っても何も起きないので、
+   アプリを落として開き直すしかなくなる。離れる時点で選択を外しておけば、
+   戻ってから触れば普通に入力できる。 */
+function releaseFocus(){
+  var el = document.activeElement;
+  if(el && el.blur && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || "")) el.blur();
+}
+function onLeave(){ saveDraft(); releaseFocus(); }
+document.addEventListener("visibilitychange", function(){
+  if(document.visibilityState === "hidden"){ onLeave(); return; }
+  // 戻った直後、画面が止まったように見えることがある。1px 動かして描き直させる
+  var y = window.pageYOffset;
+  window.scrollTo(0, y + 1);
+  window.scrollTo(0, y);
+});
+window.addEventListener("pagehide", onLeave);
 
 /* ---------- 瞬間英作文へ送る ----------
    瞬間英作文は同じドメインのパス違い（/sunkan-333/ など）に置かれているので、
@@ -2119,6 +2199,7 @@ renderSubToolbar();
 render();
 renderOutbox();
 updateSyncStatus();
+restoreDraft();
 if(!("ontouchstart" in window)) q.focus();
 
 /* 起動時：自動同期がONでオンラインなら、少し待って裏でこっそり同期を試みる */
