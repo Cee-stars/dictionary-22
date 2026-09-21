@@ -2,7 +2,7 @@
    index.html だけで完結するアプリ（アイコンは base64、マニフェストは実行時生成）なので、
    持っておくのは入口の 1 枚だけでよい。 */
 
-var CACHE = "mydict-v3";
+var CACHE = "mydict-v4";
 var SHELL = "./index.html";
 
 self.addEventListener("install", function(e){

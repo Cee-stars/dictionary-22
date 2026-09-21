@@ -445,6 +445,7 @@
     <div class="menu-item" id="mExport">バックアップを書き出す <small>JSON と CSV</small></div>
     <div class="menu-item" id="mImport">バックアップを読み込む <small>JSON / CSV</small></div>
     <div class="menu-item" id="mCsv">CSVで書き出す <small>Excel等で開ける</small></div>
+    <div class="menu-item" id="mAnki">Anki用CSVで書き出す <small>英語フレーズ / 復習キュー</small></div>
     <div class="menu-item" id="mVoice">音声の設定 <small id="mVoiceStatus"></small></div>
     <div class="menu-item" id="mSample">サンプルを入れてみる <small>14件</small></div>
     <div class="menu-item" id="mSync">同期の設定 <small id="mSyncStatus"></small></div>
@@ -1601,6 +1602,54 @@ document.getElementById("mCsv").addEventListener("click", function(){
   if(!data.length){ toast("まだ何も登録されていません"); return; }
   exportCsv();
   toast("書き出しました");
+});
+
+/* ---------- Anki用CSV ----------
+   Anki の「ファイルからインポート」にそのまま渡せる形。先頭5行の # で始まる行が
+   区切り・ノートタイプ・デッキ・欄の並びを伝えるので、1行目は必ず #separator から
+   始める（BOMを付けると読み違える版があるため、この1枚だけBOMを付けない）。
+   Excel用のCSVとは別物なので、buildCsv() とは共有しない。 */
+var ANKI_HEADER = [
+  "#separator:comma",
+  "#html:true",
+  "#notetype:英語フレーズ",
+  "#deck:復習キュー",
+  "#columns:英語,日本語,品詞,例文,例文訳"
+];
+function ankiField(s){
+  var t = String(s == null ? "" : s);
+  // #html:true で取り込むので、記号のままだとタグとして解釈されて消える
+  t = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // 欄の中の改行は、Ankiの行区切りと衝突しないよう <br> にする（意味が複数あるとき用）
+  t = t.replace(/\r\n?|\n/g, "<br>");
+  if(/[",\r\n]/.test(t)) t = '"' + t.replace(/"/g, '""') + '"';
+  return t;
+}
+function buildAnkiCsv(){
+  var items = data.filter(function(it){ return it && String(it.en||"").trim(); });
+  // Ankiは1番目の欄が空だと取り込めないので、英語の無いものは出さない
+  items.sort(function(a,b){
+    var x = norm(a.en), y = norm(b.en);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+  var rows = ANKI_HEADER.slice();
+  items.forEach(function(it){
+    rows.push([
+      ankiField(it.en),
+      ankiField(it.ja),
+      ankiField(tagLabel(it)),   // カードに出ている札と同じ文字
+      ankiField(it.ex),
+      ankiField(it.exJa)
+    ].join(","));
+  });
+  return {text: rows.join("\n") + "\n", count: items.length};
+}
+document.getElementById("mAnki").addEventListener("click", function(){
+  menu.classList.remove("on");
+  var made = buildAnkiCsv();
+  if(!made.count){ toast("書き出せる項目がありません"); return; }
+  download("anki-mydictionary-" + stamp() + ".csv", made.text, "text/csv");
+  toast(made.count + " 件をAnki用に書き出しました");
 });
 /* 例文のように改行を含むセルがあるため、引用符の中の改行を1セルとして扱う */
 function parseCsv(text){
