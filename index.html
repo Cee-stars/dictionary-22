@@ -442,7 +442,7 @@
 <div class="overlay" id="menu">
   <div class="sheet">
     <h2>メニュー</h2>
-    <div class="menu-item" id="mExport">バックアップを書き出す <small>JSONファイル</small></div>
+    <div class="menu-item" id="mExport">バックアップを書き出す <small>JSON と CSV</small></div>
     <div class="menu-item" id="mImport">バックアップを読み込む <small>JSON / CSV</small></div>
     <div class="menu-item" id="mCsv">CSVで書き出す <small>Excel等で開ける</small></div>
     <div class="menu-item" id="mVoice">音声の設定 <small id="mVoiceStatus"></small></div>
@@ -1571,17 +1571,36 @@ function stamp(){
   var d = new Date(), p = function(n){ return (n<10?"0":"")+n; };
   return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate());
 }
-document.getElementById("mExport").addEventListener("click", function(){
-  download("mydict-" + stamp() + ".json", JSON.stringify(data, null, 2), "application/json");
-  menu.classList.remove("on"); toast("書き出しました");
-});
-document.getElementById("mCsv").addEventListener("click", function(){
+/* Excel等がそのまま開ける形。先頭のBOMは、無いと日本語が化ける表計算があるため */
+function buildCsv(){
   var qcsv = function(s){ return '"' + String(s||"").replace(/"/g,'""') + '"'; };
   var rows = ["english,japanese,type,pos,example,example_ja"];
   data.forEach(function(it){ rows.push([qcsv(it.en), qcsv(it.ja), qcsv(TYPES[it.type]||""),
     qcsv(posLabel(it.type, it.pos)), qcsv(it.ex), qcsv(it.exJa)].join(",")); });
-  download("mydict-" + stamp() + ".csv", "﻿" + rows.join("\r\n"), "text/csv");
-  menu.classList.remove("on"); toast("書き出しました");
+  return "﻿" + rows.join("\r\n");
+}
+function exportJson(){ download("mydict-" + stamp() + ".json", JSON.stringify(data, null, 2), "application/json"); }
+function exportCsv(){ download("mydict-" + stamp() + ".csv", buildCsv(), "text/csv"); }
+
+/* バックアップは2つ書き出す。
+   JSONは戻すためのもの（送信済みの印や日付まで含めて、そのまま元に戻せる）。
+   CSVは見るためのもの（Excelやnumbersで開いて眺めたり直したりできる）。
+   片方しか無いと、戻せるが読めない／読めるが戻し切れない、のどちらかになる。 */
+document.getElementById("mExport").addEventListener("click", function(){
+  menu.classList.remove("on");
+  if(!data.length){ toast("まだ何も登録されていません"); return; }
+  exportJson();
+  // 続けざまに2つ落とすと取りこぼす端末があるので、少し間を空ける
+  setTimeout(function(){
+    exportCsv();
+    toast("JSONとCSVを書き出しました");
+  }, 700);
+});
+document.getElementById("mCsv").addEventListener("click", function(){
+  menu.classList.remove("on");
+  if(!data.length){ toast("まだ何も登録されていません"); return; }
+  exportCsv();
+  toast("書き出しました");
 });
 /* 例文のように改行を含むセルがあるため、引用符の中の改行を1セルとして扱う */
 function parseCsv(text){
